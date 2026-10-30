@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2"
 
 	"github.com/cert-manager/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
 	"github.com/cert-manager/cert-manager/pkg/acme/webhook/cmd"
@@ -27,22 +27,22 @@ import (
 )
 
 func main() {
-
-	if GroupName := os.Getenv("GROUP_NAME"); GroupName == "" {
-		log.Fatal("GROUP_NAME env must be specified")
-	} else {
-		// This will register our yandex DNS provider with the webhook serving
-		// library, making it available as an API under the provided GroupName.
-		// You can register multiple DNS provider implementations with a single
-		// webhook, where the Name() method will be used to disambiguate between
-		// the different implementations.
-		cmd.RunWebhookServer(GroupName,
-			&yandexCloudDNSSolver{
-				apiEndpoint: os.Getenv("API_ENDPOINT"),
-			},
-		)
+	if err := registerJSONRFC3339Format(); err != nil {
+		klog.ErrorS(err, "Failed to register log format", "format", jsonRFC3339Format)
+		os.Exit(1)
 	}
 
+	groupName := os.Getenv("GROUP_NAME")
+	if groupName == "" {
+		klog.ErrorS(nil, "GROUP_NAME env must be specified")
+		os.Exit(1)
+	}
+	klog.InfoS("Starting cert-manager-webhook-yandex", "groupName", groupName)
+	cmd.RunWebhookServer(groupName,
+		&yandexCloudDNSSolver{
+			apiEndpoint: os.Getenv("API_ENDPOINT"),
+		},
+	)
 }
 
 // yandexCloudDNSSolver implements the provider-specific logic needed to
@@ -51,7 +51,7 @@ func main() {
 // interface.
 type yandexCloudDNSSolver struct {
 	apiEndpoint   string
-	client        *kubernetes.Clientset
+	client        kubernetes.Interface
 	dnsZoneClient dnssdk.DnsZoneClient
 	folder        string
 }
@@ -91,13 +91,16 @@ func (c *yandexCloudDNSSolver) Name() string {
 // cert-manager itself will later perform a self check to ensure that the
 // solver has correctly configured the DNS provider.
 func (c *yandexCloudDNSSolver) Present(ch *v1alpha1.ChallengeRequest) error {
+	klog.InfoS("Present called", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
 	err := c.setConfig(ch)
 	if err != nil {
+		klog.ErrorS(err, "Present: failed to load config", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
 		return err
 	}
 
 	zone, err := c.getDNSZone(ch.ResolvedZone)
 	if err != nil {
+		klog.ErrorS(err, "Present: failed to find DNS zone", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
 		return err
 	}
 
@@ -115,6 +118,7 @@ func (c *yandexCloudDNSSolver) Present(ch *v1alpha1.ChallengeRequest) error {
 
 	op, err := c.dnsZoneClient.UpsertRecordSets(context.Background(), &reqUpd)
 	if err != nil {
+		klog.ErrorS(err, "Present: failed to upsert TXT record", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
 		return err
 	}
 
@@ -122,6 +126,7 @@ func (c *yandexCloudDNSSolver) Present(ch *v1alpha1.ChallengeRequest) error {
 		time.Sleep(time.Second)
 	}
 
+	klog.InfoS("Present succeeded", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
 	return nil
 }
 
@@ -132,8 +137,10 @@ func (c *yandexCloudDNSSolver) Present(ch *v1alpha1.ChallengeRequest) error {
 // This is in order to facilitate multiple DNS validations for the same domain
 // concurrently.
 func (c *yandexCloudDNSSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
+	klog.InfoS("CleanUp called", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
 	zone, err := c.getDNSZone(ch.ResolvedZone)
 	if err != nil {
+		klog.ErrorS(err, "CleanUp: failed to find DNS zone", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
 		return err
 	}
 
@@ -151,6 +158,7 @@ func (c *yandexCloudDNSSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
 
 	op, err := c.dnsZoneClient.UpsertRecordSets(context.Background(), &reqDel)
 	if err != nil {
+		klog.ErrorS(err, "CleanUp: failed to delete TXT record", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
 		return err
 	}
 
@@ -158,6 +166,7 @@ func (c *yandexCloudDNSSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
 		time.Sleep(time.Second)
 	}
 
+	klog.InfoS("CleanUp succeeded", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
 	return nil
 }
 
@@ -233,9 +242,9 @@ func (c *yandexCloudDNSSolver) setConfig(ch *v1alpha1.ChallengeRequest) error {
 	}
 
 	key := &iamkey.Key{}
-	err = key.UnmarshalJSON(saBytes)
-	if err != nil {
-		return err
+	// The parse error is discarded: it can quote fragments of the private key.
+	if err := key.UnmarshalJSON(saBytes); err != nil {
+		return errors.Errorf("failed to parse service account key from secret %q", ch.ResourceNamespace+"/"+cfg.ServiceAccountKey.Name)
 	}
 
 	saKey, err := credentials.ServiceAccountKey(key)
