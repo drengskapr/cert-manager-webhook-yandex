@@ -9,9 +9,6 @@ import (
 	logsapi "k8s.io/component-base/logs/api/v1"
 )
 
-// TestRFC3339JSONFactoryEncodesTimestamp verifies the custom json-rfc3339 log
-// format emits the "ts" field as an RFC3339Nano string rather than the epoch
-// milliseconds float used by component-base's built-in json format.
 func TestRFC3339JSONFactoryEncodesTimestamp(t *testing.T) {
 	var buf bytes.Buffer
 	logger, ctrl := rfc3339JSONFactory{}.Create(

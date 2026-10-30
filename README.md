@@ -137,7 +137,7 @@ spec:
 The default format `json-rfc3339` writes one JSON object per line with `ts` as an RFC3339Nano string:
 
 ```json
-{"ts":"2026-10-30T12:46:13.398936Z","caller":"cert-manager-webhook-yandex/main.go:129","msg":"Present succeeded","v":0,"fqdn":"_acme-challenge.example.com.","zone":"example.com."}
+{"ts":"2026-10-30T12:46:13.398936Z","caller":"workspace/main.go:130","msg":"Present succeeded","v":0,"fqdn":"_acme-challenge.example.com.","zone":"example.com."}
 ```
 
 `json` is the same format with `ts` in epoch milliseconds; `text` is klog's plain format. `logging.debug: true` adds `--v=<logging.verbosity>`. Logs never contain the challenge key or Secret data.
