@@ -1,72 +1,58 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name:   {{ include "cert-manager-webhook-yandex.fullname" . }}
+  name: {{ include "webhook.fullname" . }}
+  namespace: {{ .Release.Namespace }}
   labels:
-    app: {{ include "cert-manager-webhook-yandex.name" . }}
-    chart: {{ include "cert-manager-webhook-yandex.chart" . }}
-    release: {{ .Release.Name }}
-    heritage: {{ .Release.Service }}
+    {{- include "webhook.labels" . | nindent 4 }}
 ---
-# Grant permissions to read secrets inside the cluster to allow to have issuer in another namespace than the webhook
+# Cluster-wide: an Issuer in any namespace references a Secret in its own namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "cert-manager-webhook-yandex.fullname" . }}:secrets-reader
+  name: {{ include "webhook.fullname" . }}:secrets-reader
   labels:
-    app: {{ include "cert-manager-webhook-yandex.name" . }}
-    chart: {{ include "cert-manager-webhook-yandex.chart" . }}
-    release: {{ .Release.Name }}
-    heritage: {{ .Release.Service }}
+    {{- include "webhook.labels" . | nindent 4 }}
 rules:
   - apiGroups:
-      - ''
+      - ""
     resources:
-      - 'secrets'
+      - "secrets"
     verbs:
-      - 'get'
+      - "get"
   - apiGroups:
-      - 'flowcontrol.apiserver.k8s.io'
+      - "flowcontrol.apiserver.k8s.io"
     resources:
-      - 'flowschemas'
-      - 'prioritylevelconfigurations'
+      - "flowschemas"
+      - "prioritylevelconfigurations"
     verbs:
-      - 'list'
-      - 'watch'
+      - "list"
+      - "watch"
 ---
-# Bind the previously created role to the webhook service account to allow reading from secrets in all namespaces
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "cert-manager-webhook-yandex.fullname" . }}:secrets-reader
+  name: {{ include "webhook.fullname" . }}:secrets-reader
   labels:
-    app: {{ include "cert-manager-webhook-yandex.name" . }}
-    chart: {{ include "cert-manager-webhook-yandex.chart" . }}
-    release: {{ .Release.Name }}
-    heritage: {{ .Release.Service }}
+    {{- include "webhook.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "cert-manager-webhook-yandex.fullname" . }}:secrets-reader
+  name: {{ include "webhook.fullname" . }}:secrets-reader
 subjects:
   - apiGroup: ""
     kind: ServiceAccount
-    name:   {{ include "cert-manager-webhook-yandex.fullname" . }}
+    name: {{ include "webhook.fullname" . }}
     namespace: {{ .Release.Namespace }}
 ---
-# Grant the webhook permission to read the ConfigMap containing the Kubernetes
-# apiserver's requestheader-ca-certificate.
-# This ConfigMap is automatically created by the Kubernetes apiserver.
+# Read access to the apiserver's requestheader-ca-certificate ConfigMap.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "cert-manager-webhook-yandex.fullname" . }}:webhook-authentication-reader
+  name: {{ include "webhook.fullname" . }}:webhook-authentication-reader
   namespace: kube-system
   labels:
-    app: {{ include "cert-manager-webhook-yandex.name" . }}
-    chart: {{ include "cert-manager-webhook-yandex.chart" . }}
-    release: {{ .Release.Name }}
-    heritage: {{ .Release.Service }}
+    {{- include "webhook.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -74,20 +60,15 @@ roleRef:
 subjects:
   - apiGroup: ""
     kind: ServiceAccount
-    name:  {{ include "cert-manager-webhook-yandex.fullname" . }}
+    name: {{ include "webhook.fullname" . }}
     namespace: {{ .Release.Namespace }}
 ---
-# apiserver gets the auth-delegator role to delegate auth decisions to
-# the core apiserver
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "cert-manager-webhook-yandex.fullname" . }}:auth-delegator
+  name: {{ include "webhook.fullname" . }}:auth-delegator
   labels:
-    app: {{ include "cert-manager-webhook-yandex.name" . }}
-    chart: {{ include "cert-manager-webhook-yandex.chart" . }}
-    release: {{ .Release.Name }}
-    heritage: {{ .Release.Service }}
+    {{- include "webhook.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -95,42 +76,36 @@ roleRef:
 subjects:
   - apiGroup: ""
     kind: ServiceAccount
-    name:   {{ include "cert-manager-webhook-yandex.fullname" . }}
+    name: {{ include "webhook.fullname" . }}
     namespace: {{ .Release.Namespace }}
 ---
-# Grant cert-manager permission to validate using our apiserver
+# Lets cert-manager call the webhook's API group.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "cert-manager-webhook-yandex.fullname" . }}:domain-solver
+  name: {{ include "webhook.fullname" . }}:domain-solver
   labels:
-    app: {{ include "cert-manager-webhook-yandex.name" . }}
-    chart: {{ include "cert-manager-webhook-yandex.chart" . }}
-    release: {{ .Release.Name }}
-    heritage: {{ .Release.Service }}
+    {{- include "webhook.labels" . | nindent 4 }}
 rules:
   - apiGroups:
       - {{ .Values.groupName }}
     resources:
-      - '*'
+      - "*"
     verbs:
-      - 'create'
+      - "create"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "cert-manager-webhook-yandex.fullname" . }}:domain-solver
+  name: {{ include "webhook.fullname" . }}:domain-solver
   labels:
-    app: {{ include "cert-manager-webhook-yandex.name" . }}
-    chart: {{ include "cert-manager-webhook-yandex.chart" . }}
-    release: {{ .Release.Name }}
-    heritage: {{ .Release.Service }}
+    {{- include "webhook.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "cert-manager-webhook-yandex.fullname" . }}:domain-solver
+  name: {{ include "webhook.fullname" . }}:domain-solver
 subjects:
   - apiGroup: ""
     kind: ServiceAccount
-    name: {{ .Values.certManager.serviceAccountName}}
-    namespace: {{ .Release.Namespace }}
+    name: {{ .Values.certManager.serviceAccountName }}
+    namespace: {{ .Values.certManager.namespace | quote }}

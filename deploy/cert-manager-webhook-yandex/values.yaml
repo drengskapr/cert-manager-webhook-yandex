@@ -1,250 +1,76 @@
-groupName: acme.cloud.yandex.com
-certManager:
-    # must be identical to cert-manager.serviceAccount.name
-    serviceAccountName: cert-manager-with-yc-webhook
-customCloudApi:
-    enabled: false
-    endpoint: "api.cloud.yandex.net:443"
 image:
-    repository: cr.yandex/yc-marketplace/yandex-cloud/cert-manager-webhook-yandex/cert-manager-webhook-yandex1782355635204351992434003690541578343672052659084
-    tag: 1.0.4
-    pullPolicy: Always
+  # -- Webhook image repository
+  repository: ghcr.io/drengskapr/cert-manager-webhook-yandex
+  # -- Image tag; empty renders .Chart.AppVersion
+  tag: ""
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+
+# -- Pull secrets for the webhook pod, e.g. [{name: regcred}]
+imagePullSecrets: []
+
+# -- Overrides the chart name in resource names and labels
+nameOverride: ""
+# -- Overrides the full resource name
+fullnameOverride: ""
+
+# -- API group served by the webhook; Issuers reference it as `webhook.groupName`
+groupName: acme.cloud.yandex.com
+
+customCloudApi:
+  # -- Render the API_ENDPOINT env var
+  enabled: false
+  # -- Yandex Cloud API endpoint
+  endpoint: api.cloud.yandex.net:443
+
+logging:
+  # -- Log format: json-rfc3339 (RFC3339Nano `ts`), json (epoch-millis `ts`) or text
+  format: json-rfc3339
+  # -- Render --v=<verbosity>
+  debug: false
+  # -- Verbosity level, applied only when debug is true
+  verbosity: 1
+
+certManager:
+  # -- Namespace of the cert-manager installation
+  namespace: cert-manager
+  # -- ServiceAccount of the cert-manager controller
+  serviceAccountName: cert-manager
+
+# -- Webhook pod replicas
+replicaCount: 1
+
 service:
-    type: ClusterIP
-    port: !!float 443
-config:
-    folder_id: string
-    email: string
-    server: https://acme-staging-v02.api.letsencrypt.org/directory
-    auth:
-        json: |
-            {}
-installClusterIssuer:
-    enabled: true
-cert-manager:
-    enabled: true
-    image:
-        pullPolicy: Always
-        repository: cr.yandex/crph7r2laohtqb49dq48/jetstack/cert-manager-controller
-    serviceAccount:
-        create: true
-        # must be identical to certmManager.serviceAccountname  
-        name: cert-manager-with-yc-webhook
-        automountServiceAccountToken: true
-    installCRDs: false
-    acmesolver:
-        image:
-            repository: cr.yandex/crph7r2laohtqb49dq48/jetstack/cert-manager-acmesolver
-    affinity: {}
-    cainjector:
-        affinity: {}
-        containerSecurityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-                drop:
-                    - ALL
-        enableServiceLinks: false
-        enabled: true
-        extraArgs: []
-        image:
-            pullPolicy: IfNotPresent
-            repository: cr.yandex/crph7r2laohtqb49dq48/jetstack/cert-manager-cainjector
-        nodeSelector:
-            kubernetes.io/os: linux
-        podDisruptionBudget:
-            enabled: false
-        podLabels: {}
-        replicaCount: !!float 1
-        resources: {}
-        securityContext:
-            runAsNonRoot: true
-            seccompProfile:
-                type: RuntimeDefault
-        serviceAccount:
-            automountServiceAccountToken: true
-            create: true
-        strategy: {}
-        tolerations: []
-        topologySpreadConstraints: []
-        volumeMounts: []
-        volumes: []
-    clusterResourceNamespace: ""
-    config: null
-    containerSecurityContext:
-        allowPrivilegeEscalation: false
-        capabilities:
-            drop:
-                - ALL
-    dns01RecursiveNameservers: ""
-    dns01RecursiveNameserversOnly: false
-    enableCertificateOwnerRef: false
-    enableServiceLinks: false
-    extraArgs: []
-    extraEnv: []
-    featureGates: ""
-    global:
-        commonLabels: {}
-        imagePullSecrets: []
-        leaderElection:
-            namespace: kube-system
-        logLevel: !!float 2
-        podSecurityPolicy:
-            enabled: false
-            useAppArmor: true
-        priorityClassName: ""
-        rbac:
-            aggregateClusterRoles: true
-            create: true
-    ingressShim: {}
-    livenessProbe:
-        enabled: false
-        failureThreshold: !!float 8
-        initialDelaySeconds: !!float 10
-        periodSeconds: !!float 10
-        successThreshold: !!float 1
-        timeoutSeconds: !!float 15
-    maxConcurrentChallenges: !!float 60
-    namespace: ""
-    nodeSelector:
-        kubernetes.io/os: linux
-    podDisruptionBudget:
-        enabled: false
-    podLabels: {}
-    prometheus:
-        enabled: true
-        servicemonitor:
-            annotations: {}
-            enabled: false
-            endpointAdditionalProperties: {}
-            honorLabels: false
-            interval: 60s
-            labels: {}
-            path: /metrics
-            prometheusInstance: default
-            scrapeTimeout: 30s
-            targetPort: !!float 9402
-    replicaCount: !!float 1
-    resources: {}
-    securityContext:
-        runAsNonRoot: true
-        seccompProfile:
-            type: RuntimeDefault
-    startupapicheck:
-        affinity: {}
-        backoffLimit: !!float 4
-        containerSecurityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-                drop:
-                    - ALL
-        enableServiceLinks: false
-        enabled: true
-        extraArgs: []
-        image:
-            pullPolicy: IfNotPresent
-            repository: cr.yandex/crph7r2laohtqb49dq48/jetstack/cert-manager-ctl
-        jobAnnotations:
-            helm.sh/hook: post-install
-            helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
-            helm.sh/hook-weight: "1"
-        nodeSelector:
-            kubernetes.io/os: linux
-        podLabels: {}
-        rbac:
-            annotations:
-                helm.sh/hook: post-install
-                helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
-                helm.sh/hook-weight: "-5"
-        resources: {}
-        securityContext:
-            runAsNonRoot: true
-            seccompProfile:
-                type: RuntimeDefault
-        serviceAccount:
-            annotations:
-                helm.sh/hook: post-install
-                helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
-                helm.sh/hook-weight: "-5"
-            automountServiceAccountToken: true
-            create: true
-        timeout: 1m
-        tolerations: []
-        volumeMounts: []
-        volumes: []
-    strategy: {}
-    tolerations: []
-    topologySpreadConstraints: []
-    volumeMounts: []
-    volumes: []
-    webhook:
-        affinity: {}
-        config: null
-        containerSecurityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-                drop:
-                    - ALL
-        enableServiceLinks: false
-        extraArgs: []
-        featureGates: ""
-        hostNetwork: false
-        image:
-            pullPolicy: IfNotPresent
-            repository: cr.yandex/crph7r2laohtqb49dq48/jetstack/cert-manager-webhook
-        livenessProbe:
-            failureThreshold: !!float 3
-            initialDelaySeconds: !!float 60
-            periodSeconds: !!float 10
-            successThreshold: !!float 1
-            timeoutSeconds: !!float 1
-        networkPolicy:
-            egress:
-                - ports:
-                    - port: !!float 80
-                      protocol: TCP
-                    - port: !!float 443
-                      protocol: TCP
-                    - port: !!float 53
-                      protocol: TCP
-                    - port: !!float 53
-                      protocol: UDP
-                    - port: !!float 6443
-                      protocol: TCP
-                  to:
-                    - ipBlock:
-                        cidr: 0.0.0.0/0
-            enabled: false
-            ingress:
-                - from:
-                    - ipBlock:
-                        cidr: 0.0.0.0/0
-        nodeSelector:
-            kubernetes.io/os: linux
-        podDisruptionBudget:
-            enabled: false
-        podLabels: {}
-        readinessProbe:
-            failureThreshold: !!float 3
-            initialDelaySeconds: !!float 5
-            periodSeconds: !!float 5
-            successThreshold: !!float 1
-            timeoutSeconds: !!float 1
-        replicaCount: !!float 1
-        resources: {}
-        securePort: !!float 10250
-        securityContext:
-            runAsNonRoot: true
-            seccompProfile:
-                type: RuntimeDefault
-        serviceAccount:
-            automountServiceAccountToken: true
-            create: true
-        serviceLabels: {}
-        serviceType: ClusterIP
-        strategy: {}
-        timeoutSeconds: !!float 10
-        tolerations: []
-        topologySpreadConstraints: []
-        url: {}
-        volumeMounts: []
-        volumes: []
+  # -- Service type
+  type: ClusterIP
+  # -- Service port
+  port: 443
+
+# -- Port the webhook container listens on
+containerPort: 6443
+
+# -- Webhook container resources
+resources: {}
+
+# -- Pod security context; numeric IDs are required because the image's user is non-numeric (nonroot)
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# -- Node selector for the webhook pod
+nodeSelector: {}
+# -- Tolerations for the webhook pod
+tolerations: []
+# -- Affinity for the webhook pod
+affinity: {}

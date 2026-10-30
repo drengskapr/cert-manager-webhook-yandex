@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2"
 
 	"github.com/cert-manager/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
 	"github.com/cert-manager/cert-manager/pkg/acme/webhook/cmd"
@@ -26,23 +26,26 @@ import (
 	"github.com/yandex-cloud/go-sdk/v2/pkg/options"
 )
 
-func main() {
+// dnsOperationTimeout bounds one Present or CleanUp call; webhook.Solver passes no context.
+const dnsOperationTimeout = time.Minute
 
-	if GroupName := os.Getenv("GROUP_NAME"); GroupName == "" {
-		log.Fatal("GROUP_NAME env must be specified")
-	} else {
-		// This will register our yandex DNS provider with the webhook serving
-		// library, making it available as an API under the provided GroupName.
-		// You can register multiple DNS provider implementations with a single
-		// webhook, where the Name() method will be used to disambiguate between
-		// the different implementations.
-		cmd.RunWebhookServer(GroupName,
-			&yandexCloudDNSSolver{
-				apiEndpoint: os.Getenv("API_ENDPOINT"),
-			},
-		)
+func main() {
+	if err := registerJSONRFC3339Format(); err != nil {
+		klog.ErrorS(err, "Failed to register log format", "format", jsonRFC3339Format)
+		os.Exit(1)
 	}
 
+	groupName := os.Getenv("GROUP_NAME")
+	if groupName == "" {
+		klog.ErrorS(nil, "GROUP_NAME env must be specified")
+		os.Exit(1)
+	}
+	cmd.RunWebhookServer(groupName,
+		&yandexCloudDNSSolver{
+			apiEndpoint: os.Getenv("API_ENDPOINT"),
+			groupName:   groupName,
+		},
+	)
 }
 
 // yandexCloudDNSSolver implements the provider-specific logic needed to
@@ -50,10 +53,9 @@ func main() {
 // To do so, it must implement the `github.com/jetstack/cert-manager/pkg/acme/webhook.Solver`
 // interface.
 type yandexCloudDNSSolver struct {
-	apiEndpoint   string
-	client        *kubernetes.Clientset
-	dnsZoneClient dnssdk.DnsZoneClient
-	folder        string
+	apiEndpoint string
+	groupName   string
+	client      kubernetes.Interface
 }
 
 // yandexCloudDNSConfig is a structure that is used to decode into when
@@ -75,6 +77,22 @@ type yandexCloudDNSConfig struct {
 	ServiceAccountKey capi.SecretKeySelector `json:"serviceAccountSecretRef"`
 }
 
+// dnsSession is the Yandex Cloud DNS access of one ChallengeRequest.
+type dnsSession struct {
+	zones  dnssdk.DnsZoneClient
+	folder string
+	sdk    *ycsdk.SDK
+}
+
+func (s *dnsSession) upsert(ctx context.Context, req *dns.UpsertRecordSetsRequest) error {
+	op, err := s.zones.UpsertRecordSets(ctx, req)
+	if err != nil {
+		return err
+	}
+	_, err = op.Wait(ctx)
+	return err
+}
+
 // Name is used as the name for this DNS solver when referencing it on the ACME
 // Issuer resource.
 // This should be unique **within the group name**, i.e. you can have two
@@ -91,37 +109,30 @@ func (c *yandexCloudDNSSolver) Name() string {
 // cert-manager itself will later perform a self check to ensure that the
 // solver has correctly configured the DNS provider.
 func (c *yandexCloudDNSSolver) Present(ch *v1alpha1.ChallengeRequest) error {
-	err := c.setConfig(ch)
+	klog.InfoS("Present called", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
+	ctx, cancel := context.WithTimeout(context.Background(), dnsOperationTimeout)
+	defer cancel()
+
+	sess, err := c.newDNSSession(ctx, ch)
 	if err != nil {
+		klog.ErrorS(err, "Present: failed to load config", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
+		return err
+	}
+	defer sess.close()
+
+	zone, err := sess.findZone(ctx, ch.ResolvedZone)
+	if err != nil {
+		klog.ErrorS(err, "Present: failed to find DNS zone", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
 		return err
 	}
 
-	zone, err := c.getDNSZone(ch.ResolvedZone)
+	err = sess.upsert(ctx, &dns.UpsertRecordSetsRequest{DnsZoneId: zone.Id, Merges: []*dns.RecordSet{txtRecord(ch)}})
 	if err != nil {
+		klog.ErrorS(err, "Present: failed to upsert TXT record", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
 		return err
 	}
 
-	record := dns.RecordSet{
-		Name: ch.ResolvedFQDN,
-		Data: []string{ch.Key},
-		Ttl:  int64(60),
-		Type: "TXT",
-	}
-
-	reqUpd := dns.UpsertRecordSetsRequest{
-		DnsZoneId: zone.Id,
-		Merges:    []*dns.RecordSet{&record},
-	}
-
-	op, err := c.dnsZoneClient.UpsertRecordSets(context.Background(), &reqUpd)
-	if err != nil {
-		return err
-	}
-
-	for !op.Done() {
-		time.Sleep(time.Second)
-	}
-
+	klog.InfoS("Present succeeded", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
 	return nil
 }
 
@@ -132,46 +143,53 @@ func (c *yandexCloudDNSSolver) Present(ch *v1alpha1.ChallengeRequest) error {
 // This is in order to facilitate multiple DNS validations for the same domain
 // concurrently.
 func (c *yandexCloudDNSSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
-	zone, err := c.getDNSZone(ch.ResolvedZone)
+	klog.InfoS("CleanUp called", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
+	ctx, cancel := context.WithTimeout(context.Background(), dnsOperationTimeout)
+	defer cancel()
+
+	sess, err := c.newDNSSession(ctx, ch)
 	if err != nil {
+		klog.ErrorS(err, "CleanUp: failed to load config", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
+		return err
+	}
+	defer sess.close()
+
+	zone, err := sess.findZone(ctx, ch.ResolvedZone)
+	if err != nil {
+		klog.ErrorS(err, "CleanUp: failed to find DNS zone", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
 		return err
 	}
 
-	record := dns.RecordSet{
+	err = sess.upsert(ctx, &dns.UpsertRecordSetsRequest{DnsZoneId: zone.Id, Deletions: []*dns.RecordSet{txtRecord(ch)}})
+	if err != nil {
+		klog.ErrorS(err, "CleanUp: failed to delete TXT record", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
+		return err
+	}
+
+	klog.InfoS("CleanUp succeeded", "fqdn", ch.ResolvedFQDN, "zone", ch.ResolvedZone)
+	return nil
+}
+
+func txtRecord(ch *v1alpha1.ChallengeRequest) *dns.RecordSet {
+	return &dns.RecordSet{
 		Name: ch.ResolvedFQDN,
 		Data: []string{ch.Key},
 		Ttl:  int64(60),
 		Type: "TXT",
 	}
-
-	reqDel := dns.UpsertRecordSetsRequest{
-		DnsZoneId: zone.Id,
-		Deletions: []*dns.RecordSet{&record},
-	}
-
-	op, err := c.dnsZoneClient.UpsertRecordSets(context.Background(), &reqDel)
-	if err != nil {
-		return err
-	}
-
-	for !op.Done() {
-		time.Sleep(time.Second)
-	}
-
-	return nil
 }
 
-func (c *yandexCloudDNSSolver) getDNSZone(zone string) (*dns.DnsZone, error) {
-	resolvedZone, err := util.FindZoneByFqdn(context.Background(), zone, util.RecursiveNameservers)
+func (s *dnsSession) findZone(ctx context.Context, zone string) (*dns.DnsZone, error) {
+	resolvedZone, err := util.FindZoneByFqdn(ctx, zone, util.RecursiveNameservers)
 	if err != nil {
 		return nil, err
 	}
 
 	req := dns.ListDnsZonesRequest{
-		FolderId: c.folder,
+		FolderId: s.folder,
 		Filter:   `zone = "` + resolvedZone + `"`,
 	}
-	resp, err := c.dnsZoneClient.List(context.Background(), &req)
+	resp, err := s.zones.List(ctx, &req)
 	if err != nil {
 		return nil, err
 	}
@@ -195,6 +213,8 @@ func (c *yandexCloudDNSSolver) getDNSZone(zone string) (*dns.DnsZone, error) {
 // The stopCh can be used to handle early termination of the webhook, in cases
 // where a SIGTERM or similar signal is sent to the webhook process.
 func (c *yandexCloudDNSSolver) Initialize(kubeClientConfig *rest.Config, _ <-chan struct{}) error {
+	// Logged here, not in main: --logging-format is applied only after flag parsing.
+	klog.InfoS("Starting cert-manager-webhook-yandex", "groupName", c.groupName)
 	cl, err := kubernetes.NewForConfig(kubeClientConfig)
 	if err != nil {
 		return err
@@ -220,46 +240,49 @@ func loadConfig(cfgJSON *extapi.JSON) (yandexCloudDNSConfig, error) {
 	return cfg, nil
 }
 
-func (c *yandexCloudDNSSolver) setConfig(ch *v1alpha1.ChallengeRequest) error {
+func (c *yandexCloudDNSSolver) newDNSSession(ctx context.Context, ch *v1alpha1.ChallengeRequest) (*dnsSession, error) {
 	apiEndpoint := "api.cloud.yandex.net:443"
 	cfg, err := loadConfig(ch.Config)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	saBytes, err := c.loadSecretData(cfg.ServiceAccountKey, ch.ResourceNamespace)
+	saBytes, err := c.loadSecretData(ctx, cfg.ServiceAccountKey, ch.ResourceNamespace)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	key := &iamkey.Key{}
-	err = key.UnmarshalJSON(saBytes)
-	if err != nil {
-		return err
+	// The parse error is discarded: it can quote fragments of the private key.
+	if err := key.UnmarshalJSON(saBytes); err != nil {
+		return nil, errors.Errorf("failed to parse service account key from secret %q", ch.ResourceNamespace+"/"+cfg.ServiceAccountKey.Name)
 	}
 
 	saKey, err := credentials.ServiceAccountKey(key)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if c.apiEndpoint != "" {
 		apiEndpoint = c.apiEndpoint
 	}
 
-	sdk, err := ycsdk.Build(context.Background(), options.WithCredentials(saKey), options.WithDiscoveryEndpoint(apiEndpoint))
+	sdk, err := ycsdk.Build(ctx, options.WithCredentials(saKey), options.WithDiscoveryEndpoint(apiEndpoint))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	c.dnsZoneClient = dnssdk.NewDnsZoneClient(sdk)
-	c.folder = cfg.Folder
-
-	return nil
+	return &dnsSession{zones: dnssdk.NewDnsZoneClient(sdk), folder: cfg.Folder, sdk: sdk}, nil
 }
 
-func (c *yandexCloudDNSSolver) loadSecretData(selector capi.SecretKeySelector, ns string) ([]byte, error) {
-	secret, err := c.client.CoreV1().Secrets(ns).Get(context.TODO(), selector.Name, metav1.GetOptions{})
+func (s *dnsSession) close() {
+	if err := s.sdk.Shutdown(context.Background()); err != nil {
+		klog.ErrorS(err, "Failed to shut down Yandex Cloud SDK")
+	}
+}
+
+func (c *yandexCloudDNSSolver) loadSecretData(ctx context.Context, selector capi.SecretKeySelector, ns string) ([]byte, error) {
+	secret, err := c.client.CoreV1().Secrets(ns).Get(ctx, selector.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to load secret %q", ns+"/"+selector.Name)
 	}

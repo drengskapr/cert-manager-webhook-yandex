@@ -3,17 +3,16 @@ kind: APIService
 metadata:
   name: v1alpha1.{{ .Values.groupName }}
   labels:
-    app: {{ include "cert-manager-webhook-yandex.name" . }}
-    chart: {{ include "cert-manager-webhook-yandex.chart" . }}
-    release: {{ .Release.Name }}
-    heritage: {{ .Release.Service }}
+    {{- include "webhook.labels" . | nindent 4 }}
   annotations:
-    cert-manager.io/inject-ca-from: "{{ .Release.Namespace }}/{{ include "cert-manager-webhook-yandex.servingCertificate" . }}"
+    cert-manager.io/inject-ca-from: "{{ .Release.Namespace }}/{{ include "webhook.fullname" . }}-tls"
 spec:
   group: {{ .Values.groupName }}
   groupPriorityMinimum: 1000
   versionPriority: 15
   service:
-    name: {{ include "cert-manager-webhook-yandex.fullname" . }}
+    name: {{ include "webhook.fullname" . }}
     namespace: {{ .Release.Namespace }}
+    port: {{ .Values.service.port }}
   version: v1alpha1
+  insecureSkipTLSVerify: false

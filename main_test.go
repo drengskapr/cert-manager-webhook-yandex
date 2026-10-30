@@ -1,3 +1,7 @@
+//go:build conformance
+
+// Conformance suite: needs envtest binaries (TEST_ASSET_*) and a real zone (TEST_ZONE_NAME).
+
 package main
 
 import (

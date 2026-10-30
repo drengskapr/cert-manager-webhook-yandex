@@ -1,0 +1,6 @@
+# agents
+docs/superpowers
+
+# general
+*.pdf
+/cert-manager-webhook-yandex
