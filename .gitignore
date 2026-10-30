@@ -3,4 +3,4 @@ docs/superpowers
 
 # general
 *.pdf
-cert-manager-webhook-yandex
+/cert-manager-webhook-yandex
