@@ -150,6 +150,14 @@ The image `ghcr.io/drengskapr/cert-manager-webhook-yandex` is public and built b
 2. Push the tag `vX.Y.Z`; the workflow publishes the image as `X.Y.Z`.
 3. After the first publish only, switch the GHCR package to public in its package settings: GHCR creates user-scoped packages as private, and `GITHUB_TOKEN` cannot change visibility.
 
+## Tests
+
+| Command | Covers |
+|---|---|
+| `go test ./...` | Unit tests |
+| `scripts/test_chart.sh` | Rendered chart manifests; needs `helm` and `yq` v4 |
+| `TEST_ZONE_NAME=example.com. go test -tags conformance -run TestRunsSuite ./...` | cert-manager DNS01 conformance suite; needs envtest binaries (`TEST_ASSET_ETCD`, `TEST_ASSET_KUBE_APISERVER`, `TEST_ASSET_KUBECTL`) and the files described in `testdata/yandex-cloud-dns/README.md` |
+
 ## Values
 
 | Key | Default | Description |
