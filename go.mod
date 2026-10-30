@@ -1,4 +1,4 @@
-module github.com/yandex-cloud/cert-manager-webhook-yandex
+module github.com/drengskapr/cert-manager-webhook-yandex
 
 go 1.26.0
 
