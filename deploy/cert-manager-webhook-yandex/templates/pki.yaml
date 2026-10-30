@@ -19,7 +19,7 @@ spec:
   secretName: {{ include "webhook.fullname" . }}-ca
   duration: 43800h # 5y
   isCA: true
-  commonName: {{ include "webhook.fullname" . }}-ca
+  commonName: {{ include "webhook.fullname" . | trunc 61 | trimSuffix "-" }}-ca
   issuerRef:
     name: {{ include "webhook.fullname" . }}-selfsign
     kind: Issuer

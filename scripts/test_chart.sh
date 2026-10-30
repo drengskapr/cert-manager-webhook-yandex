@@ -16,9 +16,9 @@ render() {
 	helm template "$release" "$CHART" -n "$ns" "$@" >"$TMP/$case_name.yaml"
 }
 
-# q prints scalars as plain lines; qj prints compact JSON.
-q() { yq e -N "$1" "$TMP/$case_name.yaml"; }
-qj() { yq e -N -o=json -I=0 "$1" "$TMP/$case_name.yaml"; }
+# q prints scalars as plain lines; qj prints compact JSON. A yq error yields a value no check expects.
+q() { yq e -N "$1" "$TMP/$case_name.yaml" || echo "<yq error>"; }
+qj() { yq e -N -o=json -I=0 "$1" "$TMP/$case_name.yaml" || echo "<yq error>"; }
 
 check() {
 	local desc=$1 actual=$2 expected=$3
@@ -114,6 +114,19 @@ check "namespaced resources" \
 check "APIService service.namespace" "$(q "$API | .spec.service.namespace")" "webhooks"
 check "APIService inject-ca-from" "$(q "$API | .metadata.annotations.\"cert-manager.io/inject-ca-from\"")" "webhooks/$F-tls"
 check "domain-solver subject" "$(subjects ClusterRoleBinding "$F:domain-solver")" "cert-manager/cert-manager"
+
+case_name=longname
+# cert-manager rejects a commonName over 64 bytes.
+render a-release-name-long-enough-to-overflow-the-ca-cn cert-manager
+check "CA commonName within 64 bytes" "$(q 'select(.kind == "Certificate" and .spec.isCA == true) | .spec.commonName | length <= 64')" "true"
+
+case_name=verbosity0
+render yandex cert-manager --set logging.debug=true,logging.verbosity=0
+check "last arg" "$(q "$CTR | .args[-1]")" "--v=0"
+
+case_name=emptyformat
+render yandex cert-manager --set logging.format=
+check "--logging-format" "$(q "$CTR | .args[] | select(test(\"^--logging-format=\"))")" "--logging-format=json-rfc3339"
 
 case_name=debug
 render yandex cert-manager --set logging.debug=true
