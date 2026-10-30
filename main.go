@@ -37,10 +37,10 @@ func main() {
 		klog.ErrorS(nil, "GROUP_NAME env must be specified")
 		os.Exit(1)
 	}
-	klog.InfoS("Starting cert-manager-webhook-yandex", "groupName", groupName)
 	cmd.RunWebhookServer(groupName,
 		&yandexCloudDNSSolver{
 			apiEndpoint: os.Getenv("API_ENDPOINT"),
+			groupName:   groupName,
 		},
 	)
 }
@@ -51,6 +51,7 @@ func main() {
 // interface.
 type yandexCloudDNSSolver struct {
 	apiEndpoint   string
+	groupName     string
 	client        kubernetes.Interface
 	dnsZoneClient dnssdk.DnsZoneClient
 	folder        string
@@ -204,6 +205,8 @@ func (c *yandexCloudDNSSolver) getDNSZone(zone string) (*dns.DnsZone, error) {
 // The stopCh can be used to handle early termination of the webhook, in cases
 // where a SIGTERM or similar signal is sent to the webhook process.
 func (c *yandexCloudDNSSolver) Initialize(kubeClientConfig *rest.Config, _ <-chan struct{}) error {
+	// Logged here, not in main: --logging-format is applied only after flag parsing.
+	klog.InfoS("Starting cert-manager-webhook-yandex", "groupName", c.groupName)
 	cl, err := kubernetes.NewForConfig(kubeClientConfig)
 	if err != nil {
 		return err
